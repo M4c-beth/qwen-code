@@ -15,6 +15,10 @@
 
 import type { SkillConfig } from './types.js';
 import { INSTRUCTIONS, RESOURCES } from './types.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+
+export const LOAD_SKILL_TOOL_NAME = 'load_skill';
 
 /**
  * A catalog entry representing a skill at metadata-only disclosure level.
@@ -148,7 +152,7 @@ export function formatLoadedSkill(skill: SkillConfig, label?: string): string {
  */
 export function buildSkillBlock(
   skills: readonly SkillConfig[],
-  loaderToolName: string = 'load_skill',
+  loaderToolName: string = LOAD_SKILL_TOOL_NAME,
 ): string {
   const { loaded, catalog } = splitSkillsByDisclosure(skills);
   const blocks: string[] = [];
@@ -199,4 +203,58 @@ export function hasInstructions(skill: SkillConfig): boolean {
  */
 export function getDisclosureLevel(skill: SkillConfig): number {
   return skill.disclosureLevel ?? INSTRUCTIONS;
+}
+
+/**
+ * Catalog resource files in a skill directory (scripts, references, assets).
+ * Returns null if no resource files are found.
+ */
+export async function catalogResourceFiles(
+  skillDir: string,
+): Promise<Record<'scripts' | 'references' | 'assets', string[]> | null> {
+  const resourceDirs: Array<'scripts' | 'references' | 'assets'> = [
+    'scripts',
+    'references',
+    'assets',
+  ];
+  const result: Record<'scripts' | 'references' | 'assets', string[]> = {
+    scripts: [],
+    references: [],
+    assets: [],
+  };
+  let hasAnyFiles = false;
+
+  for (const dirName of resourceDirs) {
+    const dirPath = path.join(skillDir, dirName);
+    try {
+      const files = await scanDirectory(dirPath, dirPath);
+      result[dirName] = files;
+      if (files.length > 0) hasAnyFiles = true;
+    } catch {
+      /* Directory doesn't exist */
+    }
+  }
+
+  return hasAnyFiles ? result : null;
+}
+
+async function scanDirectory(
+  dirPath: string,
+  basePath: string,
+): Promise<string[]> {
+  const files: string[] = [];
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...(await scanDirectory(fullPath, basePath)));
+      } else if (entry.isFile()) {
+        files.push(path.relative(basePath, fullPath));
+      }
+    }
+  } catch {
+    /* Ignore */
+  }
+  return files.sort();
 }

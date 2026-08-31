@@ -26,6 +26,9 @@ import {
   parsePathsField,
   parseUserInvocableField,
   validateSkillName,
+  METADATA,
+  INSTRUCTIONS,
+  RESOURCES,
 } from './types.js';
 import type { Config } from '../config/config.js';
 import { parsePriorityField, validateConfig } from './skill-load.js';
@@ -49,6 +52,7 @@ import {
   type CommandHookConfig,
   type HttpHookConfig,
 } from '../hooks/types.js';
+import { catalogResourceFiles } from './skill-catalog.js';
 
 const debugLogger = createDebugLogger('SKILL_MANAGER');
 const SKILLS_CONFIG_DIR = 'skills';
@@ -1384,13 +1388,13 @@ export class SkillManager {
       model,
       level,
       filePath,
-      body: '', // Empty - not loaded yet
+      body: '',
       whenToUse,
       disableModelInvocation,
       userInvocable,
       paths,
       priority,
-      disclosureLevel: 1, // METADATA
+      disclosureLevel: METADATA,
     };
   }
 
@@ -1399,7 +1403,7 @@ export class SkillManager {
    * Loads the full body content from the SKILL.md file.
    */
   async promoteSkillToInstructions(skill: SkillConfig): Promise<SkillConfig> {
-    if ((skill.disclosureLevel ?? 2) >= 2) {
+    if ((skill.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS) {
       return skill;
     }
     debugLogger.debug(`Promoting skill "${skill.name}" to INSTRUCTIONS level`);
@@ -1419,71 +1423,22 @@ export class SkillManager {
    * Loads the full body and catalogs resource files.
    */
   async promoteSkillToResources(skill: SkillConfig): Promise<SkillConfig> {
-    if ((skill.disclosureLevel ?? 2) >= 3) {
+    if ((skill.disclosureLevel ?? INSTRUCTIONS) >= RESOURCES) {
       return skill;
     }
     const withInstructions =
-      (skill.disclosureLevel ?? 2) >= 2
+      (skill.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS
         ? skill
         : await this.promoteSkillToInstructions(skill);
 
     const skillDir = path.dirname(skill.filePath);
-    const resourceFiles = await this.catalogResourceFiles(skillDir);
+    const resourceFiles = await catalogResourceFiles(skillDir);
 
     return {
       ...withInstructions,
-      disclosureLevel: 3, // RESOURCES
-      resourceFiles,
+      disclosureLevel: RESOURCES,
+      resourceFiles: resourceFiles ?? undefined,
     };
-  }
-
-  private async catalogResourceFiles(
-    skillDir: string,
-  ): Promise<Record<'scripts' | 'references' | 'assets', string[]>> {
-    const resourceDirs: Array<'scripts' | 'references' | 'assets'> = [
-      'scripts',
-      'references',
-      'assets',
-    ];
-    const result: Record<'scripts' | 'references' | 'assets', string[]> = {
-      scripts: [],
-      references: [],
-      assets: [],
-    };
-
-    for (const dirName of resourceDirs) {
-      const dirPath = path.join(skillDir, dirName);
-      try {
-        result[dirName] = await this.scanDirectoryRecursive(dirPath, dirPath);
-      } catch {
-        /* Directory doesn't exist */
-      }
-    }
-
-    return result;
-  }
-
-  private async scanDirectoryRecursive(
-    dirPath: string,
-    basePath: string,
-  ): Promise<string[]> {
-    const files: string[] = [];
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        if (entry.isDirectory()) {
-          files.push(
-            ...(await this.scanDirectoryRecursive(fullPath, basePath)),
-          );
-        } else if (entry.isFile()) {
-          files.push(path.relative(basePath, fullPath));
-        }
-      }
-    } catch {
-      /* Ignore */
-    }
-    return files.sort();
   }
 
   private async ensureUserSkillsDir(): Promise<void> {

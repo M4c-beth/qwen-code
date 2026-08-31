@@ -54,6 +54,7 @@ export {
 export {
   buildCatalog,
   buildSkillBlock,
+  catalogResourceFiles,
   formatCatalogEntry,
   formatLoadedSkill,
   getDisclosureLevel,
@@ -74,6 +75,7 @@ export {
 
 export type {
   LoadSkillParams,
+  SkillLoaderFunction,
   SkillLoaderOptions,
 } from './skill-loader-tool.js';
 

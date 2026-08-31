@@ -21,23 +21,30 @@ import type { ToolResult } from '../tools/tools.js';
 import type { SkillConfig } from './types.js';
 import { INSTRUCTIONS, RESOURCES } from './types.js';
 import type { SkillCatalogEntry } from './skill-catalog.js';
-import { formatLoadedSkill } from './skill-catalog.js';
+import {
+  formatLoadedSkill,
+  catalogResourceFiles,
+  LOAD_SKILL_TOOL_NAME,
+} from './skill-catalog.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createDebugLogger } from '../utils/debugLogger.js';
 
 const debugLogger = createDebugLogger('SKILL_LOADER');
 
-export const LOAD_SKILL_TOOL_NAME = 'load_skill';
+export { LOAD_SKILL_TOOL_NAME };
 
 export interface LoadSkillParams {
   skill_name: string;
 }
 
+export type SkillLoaderFunction = (skill: SkillConfig) => Promise<SkillConfig>;
+
 export interface SkillLoaderOptions {
   catalog: Map<string, SkillCatalogEntry>;
   loadedSkills?: Map<string, SkillConfig>;
   onSkillLoaded?: (skillName: string, skill: SkillConfig) => void;
+  skillLoader?: SkillLoaderFunction;
 }
 
 class LoadSkillInvocation extends BaseToolInvocation<
@@ -52,6 +59,7 @@ class LoadSkillInvocation extends BaseToolInvocation<
       skillName: string,
       skill: SkillConfig,
     ) => void,
+    private readonly skillLoader?: SkillLoaderFunction,
   ) {
     super(params);
   }
@@ -83,7 +91,8 @@ class LoadSkillInvocation extends BaseToolInvocation<
     }
 
     try {
-      const loadedSkill = await loadFullSkill(entry.skill);
+      const loader = this.skillLoader ?? loadFullSkillDefault;
+      const loadedSkill = await loader(entry.skill);
       this.onSkillLoaded?.(skillName, loadedSkill);
       const content = formatLoadedSkill(loadedSkill, entry.label);
       debugLogger.info(
@@ -104,7 +113,7 @@ class LoadSkillInvocation extends BaseToolInvocation<
   }
 }
 
-async function loadFullSkill(skill: SkillConfig): Promise<SkillConfig> {
+async function loadFullSkillDefault(skill: SkillConfig): Promise<SkillConfig> {
   const skillDir = path.dirname(skill.filePath);
   const skillMdPath = path.join(skillDir, 'SKILL.md');
   const content = await fs.readFile(skillMdPath, 'utf8');
@@ -122,56 +131,6 @@ async function loadFullSkill(skill: SkillConfig): Promise<SkillConfig> {
   };
 }
 
-async function catalogResourceFiles(
-  skillDir: string,
-): Promise<Record<'scripts' | 'references' | 'assets', string[]> | null> {
-  const resourceDirs: Array<'scripts' | 'references' | 'assets'> = [
-    'scripts',
-    'references',
-    'assets',
-  ];
-  const result: Record<'scripts' | 'references' | 'assets', string[]> = {
-    scripts: [],
-    references: [],
-    assets: [],
-  };
-  let hasAnyFiles = false;
-
-  for (const dirName of resourceDirs) {
-    const dirPath = path.join(skillDir, dirName);
-    try {
-      const files = await scanDirectory(dirPath, dirPath);
-      result[dirName] = files;
-      if (files.length > 0) hasAnyFiles = true;
-    } catch {
-      /* Directory doesn't exist */
-    }
-  }
-
-  return hasAnyFiles ? result : null;
-}
-
-async function scanDirectory(
-  dirPath: string,
-  basePath: string,
-): Promise<string[]> {
-  const files: string[] = [];
-  try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        files.push(...(await scanDirectory(fullPath, basePath)));
-      } else if (entry.isFile()) {
-        files.push(path.relative(basePath, fullPath));
-      }
-    }
-  } catch {
-    /* Ignore */
-  }
-  return files.sort();
-}
-
 export class SkillLoaderTool extends BaseDeclarativeTool<
   LoadSkillParams,
   ToolResult
@@ -183,6 +142,7 @@ export class SkillLoaderTool extends BaseDeclarativeTool<
     skillName: string,
     skill: SkillConfig,
   ) => void;
+  private readonly skillLoader?: SkillLoaderFunction;
 
   constructor(options: SkillLoaderOptions) {
     super(
@@ -208,6 +168,7 @@ export class SkillLoaderTool extends BaseDeclarativeTool<
     this.catalog = options.catalog;
     this.loadedSkills = options.loadedSkills ?? new Map();
     this.onSkillLoaded = options.onSkillLoaded;
+    this.skillLoader = options.skillLoader;
   }
 
   protected override validateToolParamValues(
@@ -230,6 +191,7 @@ export class SkillLoaderTool extends BaseDeclarativeTool<
       this.catalog,
       this.loadedSkills,
       this.onSkillLoaded,
+      this.skillLoader,
     );
   }
 
@@ -267,6 +229,7 @@ export function createSkillLoaderTool(
   options?: {
     loadedSkills?: Map<string, SkillConfig>;
     onSkillLoaded?: (skillName: string, skill: SkillConfig) => void;
+    skillLoader?: SkillLoaderFunction;
   },
 ): SkillLoaderTool | null {
   if (catalog.size === 0) return null;
@@ -274,6 +237,7 @@ export function createSkillLoaderTool(
     catalog,
     loadedSkills: options?.loadedSkills,
     onSkillLoaded: options?.onSkillLoaded,
+    skillLoader: options?.skillLoader,
   });
 }
 

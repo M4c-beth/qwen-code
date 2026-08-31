@@ -241,14 +241,22 @@ export class SkillTool extends BaseDeclarativeTool<SkillParams, ToolResult> {
 
     const catalogMap = buildCatalogMap(catalogEntries);
 
+    // Preserve previously loaded skills from existing loader tool
+    const previouslyLoaded = this.skillLoaderTool?.getLoadedSkillNames();
+    const loadedSkillsMap = new Map<string, SkillConfig>();
+    for (const skill of this.availableSkills) {
+      if (
+        (skill.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS &&
+        (!previouslyLoaded || previouslyLoaded.has(skill.name))
+      ) {
+        loadedSkillsMap.set(skill.name, skill);
+      }
+    }
+
     // Create or update the loader tool
     this.skillLoaderTool = createSkillLoaderTool(catalogMap, {
-      loadedSkills: new Map(
-        this.availableSkills
-          .filter((s) => (s.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS)
-          .map((s) => [s.name, s]),
-      ),
-      onSkillLoaded: (skillName: string, _skill: SkillConfig) => {
+      loadedSkills: loadedSkillsMap,
+      onSkillLoaded: (skillName: string) => {
         this.loadedSkillNames.add(skillName);
         debugLogger.info(
           `Skill "${skillName}" loaded via progressive disclosure`,
