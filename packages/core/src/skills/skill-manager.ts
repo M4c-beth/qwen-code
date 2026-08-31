@@ -26,9 +26,6 @@ import {
   parsePathsField,
   parseUserInvocableField,
   validateSkillName,
-  METADATA,
-  INSTRUCTIONS,
-  RESOURCES,
 } from './types.js';
 import type { Config } from '../config/config.js';
 import { parsePriorityField, validateConfig } from './skill-load.js';
@@ -52,7 +49,6 @@ import {
   type CommandHookConfig,
   type HttpHookConfig,
 } from '../hooks/types.js';
-import { catalogResourceFiles } from './skill-catalog.js';
 
 const debugLogger = createDebugLogger('SKILL_MANAGER');
 const SKILLS_CONFIG_DIR = 'skills';
@@ -1287,158 +1283,6 @@ export class SkillManager {
       this.refreshTimer = null;
       void this.refreshCache().then(() => this.updateWatchersFromCache());
     }, 150);
-  }
-
-  // ============================================================================
-  // Progressive Disclosure / Lazy Loading
-  // ============================================================================
-
-  /**
-   * Parse only the frontmatter from a SKILL.md file (METADATA disclosure level).
-   * Lightweight alternative to parseSkillFile that skips loading the full body.
-   */
-  async parseSkillMetadata(
-    filePath: string,
-    level: SkillLevel,
-  ): Promise<SkillConfig> {
-    let content: string;
-    try {
-      content = await fs.readFile(filePath, 'utf8');
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      throw new SkillError(
-        `Failed to read skill file: ${errorMessage}`,
-        SkillErrorCode.FILE_ERROR,
-      );
-    }
-    return this.parseSkillMetadataFromContent(content, filePath, level);
-  }
-
-  /**
-   * Parse only frontmatter from skill content string (METADATA disclosure level).
-   */
-  parseSkillMetadataFromContent(
-    content: string,
-    filePath: string,
-    level: SkillLevel,
-  ): SkillConfig {
-    const normalizedContent = normalizeContent(content);
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/;
-    const match = normalizedContent.match(frontmatterRegex);
-
-    if (!match) {
-      throw new SkillError(
-        'Invalid format: missing YAML frontmatter',
-        SkillErrorCode.PARSE_ERROR,
-      );
-    }
-
-    const [, frontmatterYaml] = match;
-    const frontmatter = parseYaml(frontmatterYaml) as Record<string, unknown>;
-
-    const nameRaw = frontmatter['name'];
-    const descriptionRaw = frontmatter['description'];
-
-    if (nameRaw == null || nameRaw === '') {
-      throw new SkillError(
-        'Missing "name" in frontmatter',
-        SkillErrorCode.PARSE_ERROR,
-      );
-    }
-    if (descriptionRaw == null || descriptionRaw === '') {
-      throw new SkillError(
-        'Missing "description" in frontmatter',
-        SkillErrorCode.PARSE_ERROR,
-      );
-    }
-
-    const name = String(nameRaw);
-    validateSkillName(name);
-    const description = String(descriptionRaw);
-
-    const allowedTools = parseAllowedToolsField(frontmatter);
-    const skillRoot = path.dirname(filePath);
-    const model = parseModelField(frontmatter);
-    const argumentHint =
-      typeof frontmatter['argument-hint'] === 'string'
-        ? frontmatter['argument-hint']
-        : undefined;
-    const whenToUse =
-      typeof frontmatter['when_to_use'] === 'string'
-        ? frontmatter['when_to_use']
-        : undefined;
-    const disableModelInvocationRaw = frontmatter['disable-model-invocation'];
-    const disableModelInvocation =
-      disableModelInvocationRaw === true || disableModelInvocationRaw === 'true'
-        ? true
-        : undefined;
-    const userInvocable = parseUserInvocableField(frontmatter);
-    const paths = parsePathsField(frontmatter);
-    const priority = parsePriorityField(frontmatter, filePath, (msg) =>
-      debugLogger.warn(msg),
-    );
-
-    return {
-      name,
-      description,
-      allowedTools,
-      skillRoot,
-      argumentHint,
-      model,
-      level,
-      filePath,
-      body: '',
-      whenToUse,
-      disableModelInvocation,
-      userInvocable,
-      paths,
-      priority,
-      disclosureLevel: METADATA,
-    };
-  }
-
-  /**
-   * Promote a skill from METADATA to INSTRUCTIONS disclosure level.
-   * Loads the full body content from the SKILL.md file.
-   */
-  async promoteSkillToInstructions(skill: SkillConfig): Promise<SkillConfig> {
-    if ((skill.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS) {
-      return skill;
-    }
-    debugLogger.debug(`Promoting skill "${skill.name}" to INSTRUCTIONS level`);
-    const fullSkill = await this.parseSkillFileInternal(
-      skill.filePath,
-      skill.level,
-    );
-    return {
-      ...fullSkill,
-      extensionName: skill.extensionName,
-      extensionDisplayName: skill.extensionDisplayName,
-    };
-  }
-
-  /**
-   * Promote a skill to RESOURCES disclosure level.
-   * Loads the full body and catalogs resource files.
-   */
-  async promoteSkillToResources(skill: SkillConfig): Promise<SkillConfig> {
-    if ((skill.disclosureLevel ?? INSTRUCTIONS) >= RESOURCES) {
-      return skill;
-    }
-    const withInstructions =
-      (skill.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS
-        ? skill
-        : await this.promoteSkillToInstructions(skill);
-
-    const skillDir = path.dirname(skill.filePath);
-    const resourceFiles = await catalogResourceFiles(skillDir);
-
-    return {
-      ...withInstructions,
-      disclosureLevel: RESOURCES,
-      resourceFiles: resourceFiles ?? undefined,
-    };
   }
 
   private async ensureUserSkillsDir(): Promise<void> {

@@ -15,7 +15,6 @@ import type {
 import type { PermissionDecision } from '../permissions/types.js';
 import type { SkillManager } from '../skills/skill-manager.js';
 import type { SkillConfig } from '../skills/types.js';
-import { INSTRUCTIONS } from '../skills/types.js';
 import {
   logSkillLaunch,
   recordSkillInvocation,
@@ -25,13 +24,6 @@ import path from 'path';
 import { createDebugLogger } from '../utils/debugLogger.js';
 import { registerSkillHooks } from '../hooks/registerSkillHooks.js';
 import { recordAutoSkillUsage } from '../skills/skill-curator.js';
-import {
-  buildSkillBlock,
-  buildCatalogMap,
-  createSkillLoaderTool,
-  type SkillLoaderTool,
-  type SkillCatalogEntry,
-} from '../skills/index.js';
 
 const debugLogger = createDebugLogger('SKILL');
 
@@ -109,9 +101,6 @@ export class SkillTool extends BaseDeclarativeTool<SkillParams, ToolResult> {
   private hiddenSkillNames: Set<string> = new Set();
   private loadedSkillNames: Set<string> = new Set();
   private loadedSkillContents: Set<string> = new Set();
-  // Skill loader tool for progressive disclosure - created when there are
-  // metadata-only skills that need to be loaded on demand.
-  private skillLoaderTool: SkillLoaderTool | null = null;
   // Cleanup function returned by `addChangeListener`. Stored so per-agent
   // SkillTool instances (subagents share the parent's SkillManager) can
   // detach their listener at teardown — without this the SkillManager
@@ -199,70 +188,14 @@ export class SkillTool extends BaseDeclarativeTool<SkillParams, ToolResult> {
         collected.pendingConditionalSkillNames;
       this.modelInvocableCommands = collected.modelInvocableCommands;
       this.hiddenSkillNames = collected.hiddenSkillNames ?? new Set();
-
-      // Update progressive disclosure loader tool
-      this.updateSkillLoaderTool();
     } catch (error) {
       debugLogger.warn('Failed to load skills for Skills tool:', error);
       this.availableSkills = [];
       this.pendingConditionalSkillNames = new Set();
       this.modelInvocableCommands = [];
       this.hiddenSkillNames = new Set();
-      this.skillLoaderTool = null;
       if (options?.throwOnError) throw error;
     }
-  }
-
-  /**
-   * Creates or updates the SkillLoaderTool for progressive disclosure.
-   * Called after refreshSkills to ensure the loader reflects the current
-   * set of metadata-only skills.
-   */
-  private updateSkillLoaderTool(): void {
-    // Find skills at METADATA level (disclosureLevel < INSTRUCTIONS)
-    const metadataSkills = this.availableSkills.filter(
-      (skill) => (skill.disclosureLevel ?? INSTRUCTIONS) < INSTRUCTIONS,
-    );
-
-    if (metadataSkills.length === 0) {
-      // No metadata-only skills, remove the loader tool
-      this.skillLoaderTool = null;
-      return;
-    }
-
-    // Build catalog map for the loader tool
-    const catalogEntries: SkillCatalogEntry[] = metadataSkills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      whenToUse: skill.whenToUse,
-      skill,
-      label: skill.name,
-    }));
-
-    const catalogMap = buildCatalogMap(catalogEntries);
-
-    // Preserve previously loaded skills from existing loader tool
-    const previouslyLoaded = this.skillLoaderTool?.getLoadedSkillNames();
-    const loadedSkillsMap = new Map<string, SkillConfig>();
-    for (const skill of this.availableSkills) {
-      if (
-        (skill.disclosureLevel ?? INSTRUCTIONS) >= INSTRUCTIONS &&
-        (!previouslyLoaded || previouslyLoaded.has(skill.name))
-      ) {
-        loadedSkillsMap.set(skill.name, skill);
-      }
-    }
-
-    // Create or update the loader tool
-    this.skillLoaderTool = createSkillLoaderTool(catalogMap, {
-      loadedSkills: loadedSkillsMap,
-      onSkillLoaded: (skillName: string) => {
-        this.loadedSkillNames.add(skillName);
-        debugLogger.info(
-          `Skill "${skillName}" loaded via progressive disclosure`,
-        );
-      },
-    });
   }
 
   override validateToolParams(params: SkillParams): string | null {
@@ -405,23 +338,6 @@ export class SkillTool extends BaseDeclarativeTool<SkillParams, ToolResult> {
   }
 
   /**
-   * Returns the SkillLoaderTool for progressive disclosure, or null if there
-   * are no metadata-only skills. Tool registries use this to register the
-   * load_skill tool when progressive disclosure is active.
-   */
-  getSkillLoaderTool(): SkillLoaderTool | null {
-    return this.skillLoaderTool;
-  }
-
-  /**
-   * Builds the skill block for system prompt injection using progressive
-   * disclosure. Returns formatted XML with loaded skills and catalog entries.
-   */
-  getSkillBlock(): string {
-    return buildSkillBlock(this.availableSkills);
-  }
-
-  /**
    * Returns the set of skill names that have been successfully loaded
    * (invoked) during the current session. Used by /context to attribute
    * loaded skill body tokens separately from the tool-definition cost.
@@ -510,7 +426,6 @@ export class SkillTool extends BaseDeclarativeTool<SkillParams, ToolResult> {
    */
   dispose(): void {
     this.removeChangeListener();
-    this.skillLoaderTool = null;
   }
 }
 
