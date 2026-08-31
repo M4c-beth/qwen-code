@@ -16,6 +16,28 @@ import type { HookDefinition, HookEventName } from '../hooks/types.js';
 export type SkillLevel = 'project' | 'user' | 'extension' | 'bundled';
 
 /**
+ * Progressive disclosure levels for skill loading.
+ * Controls how much of a skill's content is loaded into context.
+ *
+ * - METADATA (1): Only frontmatter (name, description) - minimal token cost
+ * - INSTRUCTIONS (2): Full SKILL.md body loaded - complete instructions
+ * - RESOURCES (3): Body + resource directory catalog - full context
+ *
+ * This enables token optimization by keeping skill catalogs lightweight
+ * in the system prompt and only loading full instructions when needed.
+ */
+export type DisclosureLevel = 1 | 2 | 3;
+
+/** Only frontmatter metadata is loaded (name, description). */
+export const METADATA: DisclosureLevel = 1;
+
+/** Full SKILL.md body is loaded. */
+export const INSTRUCTIONS: DisclosureLevel = 2;
+
+/** Resource directories (scripts, references, assets) are cataloged. */
+export const RESOURCES: DisclosureLevel = 3;
+
+/**
  * Hooks configuration for a skill.
  * Maps hook event names to hook definitions.
  */
@@ -87,9 +109,24 @@ export interface SkillConfig {
   skillRoot?: string;
 
   /**
-   * The markdown body content from SKILL.md (after the frontmatter)
+   * The markdown body content from SKILL.md (after the frontmatter).
+   * May be empty when disclosureLevel is METADATA (lazy loading).
    */
   body: string;
+
+  /**
+   * Progressive disclosure level - controls how much of the skill is loaded.
+   * Defaults to INSTRUCTIONS (full body loaded) for backward compatibility.
+   * Set to METADATA for lazy-loaded skills that only expose name/description
+   * in the catalog until explicitly loaded via the skill loader tool.
+   */
+  disclosureLevel?: DisclosureLevel;
+
+  /**
+   * Cataloged resource files by directory (scripts, references, assets).
+   * Populated when disclosureLevel is RESOURCES.
+   */
+  resourceFiles?: Record<'scripts' | 'references' | 'assets', string[]>;
 
   /**
    * For extension-level skills: the canonical name of the providing extension
