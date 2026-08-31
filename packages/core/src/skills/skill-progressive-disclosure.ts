@@ -97,7 +97,8 @@ export function separateSkillsForRendering(skills: readonly SkillConfig[]): {
   loaded: SkillConfig[];
   catalogEntries: SkillCatalogEntry[];
 } {
-  return splitSkillsByDisclosure(skills);
+  const { loaded, catalog } = splitSkillsByDisclosure(skills);
+  return { loaded, catalogEntries: catalog };
 }
 
 export function estimateTokenSavings(
