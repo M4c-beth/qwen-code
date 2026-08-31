@@ -1285,6 +1285,207 @@ export class SkillManager {
     }, 150);
   }
 
+  // ============================================================================
+  // Progressive Disclosure / Lazy Loading
+  // ============================================================================
+
+  /**
+   * Parse only the frontmatter from a SKILL.md file (METADATA disclosure level).
+   * Lightweight alternative to parseSkillFile that skips loading the full body.
+   */
+  async parseSkillMetadata(
+    filePath: string,
+    level: SkillLevel,
+  ): Promise<SkillConfig> {
+    let content: string;
+    try {
+      content = await fs.readFile(filePath, 'utf8');
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      throw new SkillError(
+        `Failed to read skill file: ${errorMessage}`,
+        SkillErrorCode.FILE_ERROR,
+      );
+    }
+    return this.parseSkillMetadataFromContent(content, filePath, level);
+  }
+
+  /**
+   * Parse only frontmatter from skill content string (METADATA disclosure level).
+   */
+  parseSkillMetadataFromContent(
+    content: string,
+    filePath: string,
+    level: SkillLevel,
+  ): SkillConfig {
+    const normalizedContent = normalizeContent(content);
+    const frontmatterRegex = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/;
+    const match = normalizedContent.match(frontmatterRegex);
+
+    if (!match) {
+      throw new SkillError(
+        'Invalid format: missing YAML frontmatter',
+        SkillErrorCode.PARSE_ERROR,
+      );
+    }
+
+    const [, frontmatterYaml] = match;
+    const frontmatter = parseYaml(frontmatterYaml) as Record<string, unknown>;
+
+    const nameRaw = frontmatter['name'];
+    const descriptionRaw = frontmatter['description'];
+
+    if (nameRaw == null || nameRaw === '') {
+      throw new SkillError(
+        'Missing "name" in frontmatter',
+        SkillErrorCode.PARSE_ERROR,
+      );
+    }
+    if (descriptionRaw == null || descriptionRaw === '') {
+      throw new SkillError(
+        'Missing "description" in frontmatter',
+        SkillErrorCode.PARSE_ERROR,
+      );
+    }
+
+    const name = String(nameRaw);
+    validateSkillName(name);
+    const description = String(descriptionRaw);
+
+    const allowedTools = parseAllowedToolsField(frontmatter);
+    const skillRoot = path.dirname(filePath);
+    const model = parseModelField(frontmatter);
+    const argumentHint =
+      typeof frontmatter['argument-hint'] === 'string'
+        ? frontmatter['argument-hint']
+        : undefined;
+    const whenToUse =
+      typeof frontmatter['when_to_use'] === 'string'
+        ? frontmatter['when_to_use']
+        : undefined;
+    const disableModelInvocationRaw = frontmatter['disable-model-invocation'];
+    const disableModelInvocation =
+      disableModelInvocationRaw === true || disableModelInvocationRaw === 'true'
+        ? true
+        : undefined;
+    const userInvocable = parseUserInvocableField(frontmatter);
+    const paths = parsePathsField(frontmatter);
+    const priority = parsePriorityField(frontmatter, filePath, (msg) =>
+      debugLogger.warn(msg),
+    );
+
+    return {
+      name,
+      description,
+      allowedTools,
+      skillRoot,
+      argumentHint,
+      model,
+      level,
+      filePath,
+      body: '', // Empty - not loaded yet
+      whenToUse,
+      disableModelInvocation,
+      userInvocable,
+      paths,
+      priority,
+      disclosureLevel: 1, // METADATA
+    };
+  }
+
+  /**
+   * Promote a skill from METADATA to INSTRUCTIONS disclosure level.
+   * Loads the full body content from the SKILL.md file.
+   */
+  async promoteSkillToInstructions(skill: SkillConfig): Promise<SkillConfig> {
+    if ((skill.disclosureLevel ?? 2) >= 2) {
+      return skill;
+    }
+    debugLogger.debug(`Promoting skill "${skill.name}" to INSTRUCTIONS level`);
+    const fullSkill = await this.parseSkillFileInternal(
+      skill.filePath,
+      skill.level,
+    );
+    return {
+      ...fullSkill,
+      extensionName: skill.extensionName,
+      extensionDisplayName: skill.extensionDisplayName,
+    };
+  }
+
+  /**
+   * Promote a skill to RESOURCES disclosure level.
+   * Loads the full body and catalogs resource files.
+   */
+  async promoteSkillToResources(skill: SkillConfig): Promise<SkillConfig> {
+    if ((skill.disclosureLevel ?? 2) >= 3) {
+      return skill;
+    }
+    const withInstructions =
+      (skill.disclosureLevel ?? 2) >= 2
+        ? skill
+        : await this.promoteSkillToInstructions(skill);
+
+    const skillDir = path.dirname(skill.filePath);
+    const resourceFiles = await this.catalogResourceFiles(skillDir);
+
+    return {
+      ...withInstructions,
+      disclosureLevel: 3, // RESOURCES
+      resourceFiles,
+    };
+  }
+
+  private async catalogResourceFiles(
+    skillDir: string,
+  ): Promise<Record<'scripts' | 'references' | 'assets', string[]>> {
+    const resourceDirs: Array<'scripts' | 'references' | 'assets'> = [
+      'scripts',
+      'references',
+      'assets',
+    ];
+    const result: Record<'scripts' | 'references' | 'assets', string[]> = {
+      scripts: [],
+      references: [],
+      assets: [],
+    };
+
+    for (const dirName of resourceDirs) {
+      const dirPath = path.join(skillDir, dirName);
+      try {
+        result[dirName] = await this.scanDirectoryRecursive(dirPath, dirPath);
+      } catch {
+        /* Directory doesn't exist */
+      }
+    }
+
+    return result;
+  }
+
+  private async scanDirectoryRecursive(
+    dirPath: string,
+    basePath: string,
+  ): Promise<string[]> {
+    const files: string[] = [];
+    try {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          files.push(
+            ...(await this.scanDirectoryRecursive(fullPath, basePath)),
+          );
+        } else if (entry.isFile()) {
+          files.push(path.relative(basePath, fullPath));
+        }
+      }
+    } catch {
+      /* Ignore */
+    }
+    return files.sort();
+  }
+
   private async ensureUserSkillsDir(): Promise<void> {
     const baseDir = path.join(Storage.getGlobalQwenDir(), SKILLS_CONFIG_DIR);
     try {

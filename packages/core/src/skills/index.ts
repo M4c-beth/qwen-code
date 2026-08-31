@@ -27,9 +27,16 @@ export type {
   SkillValidationResult,
   ListSkillsOptions,
   SkillErrorCode,
+  DisclosureLevel,
 } from './types.js';
 
-export { SkillError, validateSkillName } from './types.js';
+export {
+  SkillError,
+  validateSkillName,
+  METADATA,
+  INSTRUCTIONS,
+  RESOURCES,
+} from './types.js';
 
 // Main management class
 export { SkillManager } from './skill-manager.js';
@@ -42,6 +49,47 @@ export {
   SkillActivationRegistry,
   splitConditionalSkills,
 } from './skill-activation.js';
+
+// Progressive disclosure - skill catalog and formatting
+export {
+  buildCatalog,
+  buildSkillBlock,
+  formatCatalogEntry,
+  formatLoadedSkill,
+  getDisclosureLevel,
+  hasInstructions,
+  isMetadataOnly,
+  splitSkillsByDisclosure,
+} from './skill-catalog.js';
+
+export type { SkillCatalogEntry, SkillGroups } from './skill-catalog.js';
+
+// Progressive disclosure - skill loader tool
+export {
+  buildCatalogMap,
+  createSkillLoaderTool,
+  LOAD_SKILL_TOOL_NAME,
+  SkillLoaderTool,
+} from './skill-loader-tool.js';
+
+export type {
+  LoadSkillParams,
+  SkillLoaderOptions,
+} from './skill-loader-tool.js';
+
+// Progressive disclosure integration
+export {
+  applyProgressiveDisclosure,
+  buildLazyLoadCatalog,
+  DEFAULT_PROGRESSIVE_DISCLOSURE_CONFIG,
+  estimateTokenSavings,
+  parseLazyLoadField,
+  renderProgressiveDisclosureSkillEntry,
+  separateSkillsForRendering,
+  shouldLazyLoadSkill,
+} from './skill-progressive-disclosure.js';
+
+export type { ProgressiveDisclosureConfig } from './skill-progressive-disclosure.js';
 
 // Project auto-skill lifecycle maintenance
 export * from './skill-curator.js';
